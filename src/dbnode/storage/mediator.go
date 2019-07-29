@@ -140,25 +140,6 @@ func (m *mediator) EnableFileOps() {
 	m.databaseFileSystemManager.Enable()
 }
 
-// The mediator mediates the relationship between ticks and flushes(warm and cold)/snapshots/cleanups.
-//
-// For example, the requirements to perform a flush are:
-// 		1) currentTime > blockStart.Add(blockSize).Add(bufferPast)
-// 		2) node is not bootstrapping (technically shard is not bootstrapping)
-//
-// For example, there is logic in the Tick flow for removing shard flush states from a map so that it doesn't
-// grow infinitely for nodes that are not restarted. If the Tick path measured the current time when it made that
-// decision instead of using the same measurement that is shared with the flush logic, it might end up removing
-// a shard flush state (due to it expiring), but since the flush logic is using a slightly more stale timestamp it
-// will think that the old block hasn't been flushed (even thought it has) and try to flush it even though the data
-// is potentially still on disk (if it hasn't been cleaned up yet).
-//
-// See comment over mediatorTimeBarrier for more details on how this is implemented.
-func (m *mediator) RunFilesystemProcesses(forceType forceType, startTime time.Time) error {
-	m.databaseFileSystemManager.Run(startTime, syncRun, forceType)
-	return nil
-}
-
 func (m *mediator) Report() {
 	m.databaseBootstrapManager.Report()
 	m.databaseRepairer.Report()
@@ -180,6 +161,20 @@ func (m *mediator) Close() error {
 	return nil
 }
 
+// The mediator mediates the relationship between ticks and flushes(warm and cold)/snapshots/cleanups.
+//
+// For example, the requirements to perform a flush are:
+// 		1) currentTime > blockStart.Add(blockSize).Add(bufferPast)
+// 		2) node is not bootstrapping (technically shard is not bootstrapping)
+//
+// For example, there is logic in the Tick flow for removing shard flush states from a map so that it doesn't
+// grow infinitely for nodes that are not restarted. If the Tick path measured the current time when it made that
+// decision instead of using the same measurement that is shared with the flush logic, it might end up removing
+// a shard flush state (due to it expiring), but since the flush logic is using a slightly more stale timestamp it
+// will think that the old block hasn't been flushed (even thought it has) and try to flush it even though the data
+// is potentially still on disk (if it hasn't been cleaned up yet).
+//
+// See comment over mediatorTimeBarrier for more details on how this is implemented.
 func (m *mediator) ongoingFilesystemProcesses() {
 	log := m.opts.InstrumentOptions().Logger()
 	for {
@@ -194,10 +189,7 @@ func (m *mediator) ongoingFilesystemProcesses() {
 				log.Error("error within ongoingFilesystemProcesses waiting for next mediatorTime", zap.Error(err))
 			}
 
-			if err := m.RunFilesystemProcesses(noForce, mediatorTime); err != nil {
-				log.Error("error within ongoingFilesystemProcesses running filesystem processes", zap.Error(err))
-				continue
-			}
+			m.databaseFileSystemManager.Run(mediatorTime, syncRun, noForce)
 		}
 	}
 }
